@@ -1,6 +1,7 @@
 import warnings
 import numpy as np
 import matplotlib.pyplot as plt
+import pandas as pd
 
 def Watt2dBm(x):
 	'''
@@ -30,10 +31,10 @@ class plotting(object):
 		plt.ylabel('Im(S21)')
 		plt.legend()
 		plt.subplot(222)
-		plt.plot(self.f_data*1e-9,np.absolute(self.z_data_raw),label='rawdata')
-		plt.plot(self.f_data*1e-9,np.absolute(self.z_data_sim),label='fit')
+		plt.plot(self.f_data*1e-9,20.*np.log10(np.absolute(self.z_data_raw)),label='rawdata')
+		plt.plot(self.f_data*1e-9,20.*np.log10(np.absolute(self.z_data_sim)),label='fit')
 		plt.xlabel('f (GHz)')
-		plt.ylabel('|S21|')
+		plt.ylabel('|S21| (dB)')
 		plt.legend()
 		plt.subplot(223)
 		plt.plot(self.f_data*1e-9,np.angle(self.z_data_raw),label='rawdata')
@@ -165,6 +166,15 @@ class save_load(object):
 			warnings.warn("Undefined input type! Use 'realimag', 'dBmagphaserad', 'linmagphaserad', 'dBmagphasedeg' or 'linmagphasedeg'.", SyntaxWarning)
 		self.f_data = np.array(f_data)
 		self.z_data_raw = np.array(z_data_raw)
+	def myadd_froms2p(self,fname,dtype,fdata_unit=1.):
+		'''
+		dtype = 'S11', 'S21'
+		'''
+		if dtype != 'S11' and dtype != 'S21':
+			warnings.warn("Undefined input type! Use 'S11' or 'S21'.", SyntaxWarning)
+		data=pd.read_csv(fname)
+		self.f_data = np.array(data['freq'])*fdata_unit
+		self.z_data_raw = np.array(data[dtype]).astype(complex)
 		
 	def save_fitresults(self,fname):
 		pass
