@@ -78,24 +78,44 @@ class reflection_port(circlefit, save_load, plotting, calibration):
 			delay = self._fit_delay(f_data,z_data,delay,maxiter=200)
 		params = [A1, A2, A3, A4, fr, Ql]
 		return delay, params 
-	
-	def do_calibration(self,f_data,z_data,ignoreslope=True,guessdelay=True,fixed_delay=None):
+
+	def do_calibration(self,f_data,z_data,ignoreslope=True,guessdelay=True,fixed_delay=None, Ql_guess=None, fr_guess=None):
 		'''
-		calculating parameters for normalization
+		performs an automated calibration and tries to determine the prefactors a, alpha, delay
+		fr, Ql, and a possible slope are extra information, which can be used as start parameters for subsequent fits
+		see also "do_normalization"
+		the calibration procedure works for transmission line resonators as well
 		'''
 		delay, params = self.get_delay(f_data,z_data,ignoreslope=ignoreslope,guess=guessdelay,delay=fixed_delay)
 		z_data = (z_data-params[1]*(f_data-params[4]))*np.exp(2.*1j*np.pi*delay*f_data)
 		xc, yc, r0 = self._fit_circle(z_data)
 		zc = complex(xc,yc)
-		fitparams = self._phase_fit(f_data,self._center(z_data,zc),0.,np.absolute(params[5]),params[4])
+		if Ql_guess is None: Ql_guess=np.absolute(params[5]) 
+		if fr_guess is None: fr_guess=params[4] 
+		fitparams = self._phase_fit(f_data,self._center(z_data,zc),0.,Ql_guess,fr_guess) 
 		theta, Ql, fr = fitparams
 		beta = self._periodic_boundary(theta+np.pi,np.pi) ###
 		offrespoint = complex((xc+r0*np.cos(beta)),(yc+r0*np.sin(beta)))
 		alpha = self._periodic_boundary(np.angle(offrespoint)+np.pi,np.pi)
-		#a = np.absolute(offrespoint)
-		#alpha = np.angle(zc)
 		a = r0 + np.absolute(zc)
 		return delay, a, alpha, fr, Ql, params[1], params[4]
+	# def do_calibration(self,f_data,z_data,ignoreslope=True,guessdelay=True,fixed_delay=None):
+	# 	'''
+	# 	calculating parameters for normalization
+	# 	'''
+	# 	delay, params = self.get_delay(f_data,z_data,ignoreslope=ignoreslope,guess=guessdelay,delay=fixed_delay)
+	# 	z_data = (z_data-params[1]*(f_data-params[4]))*np.exp(2.*1j*np.pi*delay*f_data)
+	# 	xc, yc, r0 = self._fit_circle(z_data)
+	# 	zc = complex(xc,yc)
+	# 	fitparams = self._phase_fit(f_data,self._center(z_data,zc),0.,np.absolute(params[5]),params[4])
+	# 	theta, Ql, fr = fitparams
+	# 	beta = self._periodic_boundary(theta+np.pi,np.pi) ###
+	# 	offrespoint = complex((xc+r0*np.cos(beta)),(yc+r0*np.sin(beta)))
+	# 	alpha = self._periodic_boundary(np.angle(offrespoint)+np.pi,np.pi)
+	# 	#a = np.absolute(offrespoint)
+	# 	#alpha = np.angle(zc)
+	# 	a = r0 + np.absolute(zc)
+	# 	return delay, a, alpha, fr, Ql, params[1], params[4]
 	
 	def do_normalization(self,f_data,z_data,delay,amp_norm,alpha,A2,frcal):
 		'''
@@ -149,7 +169,7 @@ class reflection_port(circlefit, save_load, plotting, calibration):
 		return results
 		
 	
-	def autofit(self,electric_delay=None,fcrop=None):
+	def autofit(self,electric_delay=None,fcrop=None,Ql_guess=None, fr_guess=None):
 		'''
 		automatic calibration and fitting
 		electric_delay: set the electric delay manually
@@ -161,13 +181,13 @@ class reflection_port(circlefit, save_load, plotting, calibration):
 			f1, f2 = fcrop
 			self._fid = np.logical_and(self.f_data>=f1,self.f_data<=f2)
 		delay, amp_norm, alpha, fr, Ql, A2, frcal =\
-				self.do_calibration(self.f_data[self._fid],self.z_data_raw[self._fid],ignoreslope=True,guessdelay=False,fixed_delay=electric_delay)
+				self.do_calibration(self.f_data[self._fid],self.z_data_raw[self._fid],ignoreslope=True,guessdelay=True,fixed_delay=electric_delay,Ql_guess=Ql_guess, fr_guess=fr_guess)
+				# self.do_calibration(self.f_data[self._fid],self.z_data_raw[self._fid],ignoreslope=True,guessdelay=False,fixed_delay=electric_delay)
 		self.z_data = self.do_normalization(self.f_data,self.z_data_raw,delay,amp_norm,alpha,A2,frcal)
 		self.fitresults = self.circlefit(self.f_data[self._fid],self.z_data[self._fid],fr,Ql,refine_results=False,calc_errors=True)
 		self.z_data_sim = A2*(self.f_data-frcal)+self._S11_directrefl(self.f_data,fr=self.fitresults["fr"],Ql=self.fitresults["Ql"],Qc=self.fitresults["Qc"],a=amp_norm,alpha=alpha,delay=delay)
 		self.z_data_sim_norm = self._S11_directrefl(self.f_data,fr=self.fitresults["fr"],Ql=self.fitresults["Ql"],Qc=self.fitresults["Qc"],a=1.,alpha=0.,delay=0.)		
 		self._delay = delay
-		
 	def GUIfit(self):
 		'''
 		automatic fit with possible user interaction to crop the data and modify the electric delay
@@ -183,16 +203,16 @@ class reflection_port(circlefit, save_load, plotting, calibration):
 		fig, ((ax2,ax0),(ax1,ax3)) = plt.subplots(nrows=2,ncols=2)
 		plt.suptitle('Normalized data. Use the silders to improve the fitting if necessary.')
 		plt.subplots_adjust(left=0.25, bottom=0.25)
-		l0, = ax0.plot(self.f_data*1e-9,np.absolute(self.z_data))
+		l0, = ax0.plot(self.f_data*1e-9,20.*np.log10(np.absolute(self.z_data)))
 		l1, = ax1.plot(self.f_data*1e-9,np.angle(self.z_data))
 		l2, = ax2.plot(np.real(self.z_data),np.imag(self.z_data))
-		l0s, = ax0.plot(self.f_data*1e-9,np.absolute(self.z_data_sim_norm))
+		l0s, = ax0.plot(self.f_data*1e-9,20.*np.log10(np.absolute(self.z_data_sim_norm)))
 		l1s, = ax1.plot(self.f_data*1e-9,np.angle(self.z_data_sim_norm))
 		l2s, = ax2.plot(np.real(self.z_data_sim_norm),np.imag(self.z_data_sim_norm))
 		ax0.set_xlabel('f (GHz)')
 		ax1.set_xlabel('f (GHz)')
 		ax2.set_xlabel('real')
-		ax0.set_ylabel('amp')
+		ax0.set_ylabel('amp (dB)')
 		ax1.set_ylabel('phase (rad)')
 		ax2.set_ylabel('imagl')
 		fr_ann = ax3.annotate('fr = %e Hz +- %e Hz' % (self.fitresults['fr'],self.fitresults['fr_err']),xy=(0.1, 0.8), xycoords='axes fraction')
@@ -200,9 +220,9 @@ class reflection_port(circlefit, save_load, plotting, calibration):
 		Qc_ann = ax3.annotate('Qc = %e +- %e' % (self.fitresults['Qc'],self.fitresults['Qc_err']),xy=(0.1, 0.4), xycoords='axes fraction')
 		Qi_ann = ax3.annotate('Qi = %e +- %e' % (self.fitresults['Qi'],self.fitresults['Qi_err']),xy=(0.1, 0.2), xycoords='axes fraction')
 		axcolor = 'lightgoldenrodyellow'
-		axdelay = plt.axes([0.25, 0.05, 0.65, 0.03], axisbg=axcolor)
-		axf2 = plt.axes([0.25, 0.1, 0.65, 0.03], axisbg=axcolor)
-		axf1 = plt.axes([0.25, 0.15, 0.65, 0.03], axisbg=axcolor)
+		axdelay = plt.axes([0.25, 0.05, 0.65, 0.03], facecolor=axcolor)
+		axf2 = plt.axes([0.25, 0.1, 0.65, 0.03], facecolor=axcolor)
+		axf1 = plt.axes([0.25, 0.15, 0.65, 0.03], facecolor=axcolor)
 		sscale = 10.
 		sdelay = Slider(axdelay, 'delay', -1., 1., valinit=self.__delay/(sscale*self.__delay),valfmt='%f')
 		df = (fmax-fmin)*0.05
@@ -210,10 +230,10 @@ class reflection_port(circlefit, save_load, plotting, calibration):
 		sf1 = Slider(axf1, 'f1', (fmin-df)*1e-9, (fmax+df)*1e-9, valinit=fmin*1e-9,valfmt='%.10f GHz')
 		def update(val):
 			self.autofit(electric_delay=sdelay.val*sscale*self.__delay,fcrop=(sf1.val*1e9,sf2.val*1e9))
-			l0.set_data(self.f_data*1e-9,np.absolute(self.z_data))
+			l0.set_data(self.f_data*1e-9,20.*np.log10(np.absolute(self.z_data)))
 			l1.set_data(self.f_data*1e-9,np.angle(self.z_data))
 			l2.set_data(np.real(self.z_data),np.imag(self.z_data))
-			l0s.set_data(self.f_data[self._fid]*1e-9,np.absolute(self.z_data_sim_norm[self._fid]))
+			l0s.set_data(self.f_data[self._fid]*1e-9,20.*np.log10(np.absolute(self.z_data_sim_norm[self._fid])))
 			l1s.set_data(self.f_data[self._fid]*1e-9,np.angle(self.z_data_sim_norm[self._fid]))
 			l2s.set_data(np.real(self.z_data_sim_norm[self._fid]),np.imag(self.z_data_sim_norm[self._fid]))
 			fr_ann.set_text('fr = %e Hz +- %e Hz' % (self.fitresults['fr'],self.fitresults['fr_err']))
@@ -234,6 +254,72 @@ class reflection_port(circlefit, save_load, plotting, calibration):
 		button.on_clicked(btnclicked)
 		plt.show()	
 		plt.close()
+	# def GUIfit(self):
+	# 	'''
+	# 	automatic fit with possible user interaction to crop the data and modify the electric delay
+	# 	f1,f2,delay are determined in the GUI. Then, data is cropped and autofit with delay is performed
+	# 	'''
+	# 	#copy data
+	# 	fmin, fmax = self.f_data.min(), self.f_data.max()
+	# 	self.autofit()
+	# 	self.__delay = self._delay
+	# 	#prepare plot and slider
+	# 	import matplotlib.pyplot as plt
+	# 	from matplotlib.widgets import Slider, Button
+	# 	fig, ((ax2,ax0),(ax1,ax3)) = plt.subplots(nrows=2,ncols=2)
+	# 	plt.suptitle('Normalized data. Use the silders to improve the fitting if necessary.')
+	# 	plt.subplots_adjust(left=0.25, bottom=0.25)
+	# 	l0, = ax0.plot(self.f_data*1e-9,np.absolute(self.z_data))
+	# 	l1, = ax1.plot(self.f_data*1e-9,np.angle(self.z_data))
+	# 	l2, = ax2.plot(np.real(self.z_data),np.imag(self.z_data))
+	# 	l0s, = ax0.plot(self.f_data*1e-9,np.absolute(self.z_data_sim_norm))
+	# 	l1s, = ax1.plot(self.f_data*1e-9,np.angle(self.z_data_sim_norm))
+	# 	l2s, = ax2.plot(np.real(self.z_data_sim_norm),np.imag(self.z_data_sim_norm))
+	# 	ax0.set_xlabel('f (GHz)')
+	# 	ax1.set_xlabel('f (GHz)')
+	# 	ax2.set_xlabel('real')
+	# 	ax0.set_ylabel('amp')
+	# 	ax1.set_ylabel('phase (rad)')
+	# 	ax2.set_ylabel('imagl')
+	# 	fr_ann = ax3.annotate('fr = %e Hz +- %e Hz' % (self.fitresults['fr'],self.fitresults['fr_err']),xy=(0.1, 0.8), xycoords='axes fraction')
+	# 	Ql_ann = ax3.annotate('Ql = %e +- %e' % (self.fitresults['Ql'],self.fitresults['Ql_err']),xy=(0.1, 0.6), xycoords='axes fraction')
+	# 	Qc_ann = ax3.annotate('Qc = %e +- %e' % (self.fitresults['Qc'],self.fitresults['Qc_err']),xy=(0.1, 0.4), xycoords='axes fraction')
+	# 	Qi_ann = ax3.annotate('Qi = %e +- %e' % (self.fitresults['Qi'],self.fitresults['Qi_err']),xy=(0.1, 0.2), xycoords='axes fraction')
+	# 	axcolor = 'lightgoldenrodyellow'
+	# 	axdelay = plt.axes([0.25, 0.05, 0.65, 0.03], facecolor=axcolor)
+	# 	axf2 = plt.axes([0.25, 0.1, 0.65, 0.03], facecolor=axcolor)
+	# 	axf1 = plt.axes([0.25, 0.15, 0.65, 0.03], facecolor=axcolor)
+	# 	sscale = 10.
+	# 	sdelay = Slider(axdelay, 'delay', -1., 1., valinit=self.__delay/(sscale*self.__delay),valfmt='%f')
+	# 	df = (fmax-fmin)*0.05
+	# 	sf2 = Slider(axf2, 'f2', (fmin-df)*1e-9, (fmax+df)*1e-9, valinit=fmax*1e-9,valfmt='%.10f GHz')
+	# 	sf1 = Slider(axf1, 'f1', (fmin-df)*1e-9, (fmax+df)*1e-9, valinit=fmin*1e-9,valfmt='%.10f GHz')
+	# 	def update(val):
+	# 		self.autofit(electric_delay=sdelay.val*sscale*self.__delay,fcrop=(sf1.val*1e9,sf2.val*1e9))
+	# 		l0.set_data(self.f_data*1e-9,np.absolute(self.z_data))
+	# 		l1.set_data(self.f_data*1e-9,np.angle(self.z_data))
+	# 		l2.set_data(np.real(self.z_data),np.imag(self.z_data))
+	# 		l0s.set_data(self.f_data[self._fid]*1e-9,np.absolute(self.z_data_sim_norm[self._fid]))
+	# 		l1s.set_data(self.f_data[self._fid]*1e-9,np.angle(self.z_data_sim_norm[self._fid]))
+	# 		l2s.set_data(np.real(self.z_data_sim_norm[self._fid]),np.imag(self.z_data_sim_norm[self._fid]))
+	# 		fr_ann.set_text('fr = %e Hz +- %e Hz' % (self.fitresults['fr'],self.fitresults['fr_err']))
+	# 		Ql_ann.set_text('Ql = %e +- %e' % (self.fitresults['Ql'],self.fitresults['Ql_err']))
+	# 		Qc_ann.set_text('Qc = %e +- %e' % (self.fitresults['Qc'],self.fitresults['Qc_err']))
+	# 		Qi_ann.set_text('Qi = %e +- %e' % (self.fitresults['Qi'],self.fitresults['Qi_err']))
+	# 		fig.canvas.draw_idle()
+	# 	def btnclicked(event):
+	# 		self.autofit(electric_delay=None,fcrop=(sf1.val*1e9,sf2.val*1e9))
+	# 		self.__delay = self._delay
+	# 		sdelay.reset()
+	# 		update(event)
+	# 	sf1.on_changed(update)
+	# 	sf2.on_changed(update)
+	# 	sdelay.on_changed(update)
+	# 	btnax = plt.axes([0.05, 0.1, 0.1, 0.04])
+	# 	button = Button(btnax, 'auto-delay', color=axcolor, hovercolor='0.975')
+	# 	button.on_clicked(btnclicked)
+	# 	plt.show()	
+	# 	plt.close()
 
 	def _S11_directrefl(self,f,fr=10e9,Ql=900,Qc=1000.,a=1.,alpha=0.,delay=.0):
 		'''
